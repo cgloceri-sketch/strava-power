@@ -392,11 +392,25 @@ avg_v = float(np.mean(v[moving_mask])) * 3.6 if moving_mask.any() else float(np.
 
 st.divider()
 m1, m2, m3, m4, m5 = st.columns(5)
-m1.metric("Avg Power",        f"{avg_w:.0f} W")
-m2.metric("Normalized Power", f"{NP:.0f} W")
-m3.metric("Mechanical Work",  f"{kJ:.1f} kJ")
-m4.metric("Calories Burned",  f"{kcal:.0f} kcal")
-m5.metric("Avg Speed",        f"{avg_v:.1f} km/h")
+m1.metric("Avg Power", f"{avg_w:.0f} W",
+    help="Mean mechanical power output over moving time. Stops and coasting are excluded.")
+m2.metric("Normalized Power", f"{NP:.0f} W",
+    help=(
+        "A weighted average that accounts for the physiological cost of variable effort. "
+        "Computed as the 4th-root of the mean 4th-power of a 30-second rolling average — "
+        "so hard surges count more than their share. "
+        "NP > Avg Power means the ride had significant variability (climbs, intervals, traffic)."
+    ))
+m3.metric("Mechanical Work", f"{kJ:.1f} kJ",
+    help="Total mechanical energy produced (∫ P dt). Numerically close to kcal for cyclists: 1 kJ ≈ 1 kcal at ~24% efficiency.")
+m4.metric("Calories Burned", f"{kcal:.0f} kcal",
+    help=(
+        "Food energy consumed, estimated from mechanical work and metabolic efficiency (default 23%). "
+        "Accounts for the fact that muscles are ~23% efficient — most energy becomes heat. "
+        "Adjust efficiency in Advanced physics if you have a better estimate."
+    ))
+m5.metric("Avg Speed", f"{avg_v:.1f} km/h",
+    help="Mean ground speed over moving time. Stopped samples are excluded.")
 
 stopped_min = stopped_s // 60
 st.caption(

@@ -99,3 +99,8 @@ def load_history() -> pd.DataFrame:
 def delete_result(activity_id: int) -> None:
     with _conn() as c:
         c.execute("DELETE FROM results WHERE activity_id = ?", (activity_id,))
+
+
+def clear_history() -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM results")

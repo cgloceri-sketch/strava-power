@@ -23,7 +23,7 @@ load_dotenv(override=True)
 # LOCAL_MODE=true in .env → SQLite persistence; unset on Streamlit Cloud → session-only
 _LOCAL = os.getenv("LOCAL_MODE", "").lower() in ("1", "true", "yes")
 if _LOCAL:
-    from db import delete_result, init_db, load_history, save_result
+    from db import clear_history, delete_result, init_db, load_history, save_result
     init_db()
 
 
@@ -669,12 +669,31 @@ else:
         st.caption("Ranked by W/kg (NP ÷ rider weight)")
         st.dataframe(eff_tbl, use_container_width=True, hide_index=True)
 
-    # ── Delete entry (local mode only) ────────────────────────────────────────
-    if _LOCAL:
-        with st.expander("🗑️ Delete a saved entry"):
-            del_labels = (hist["activity_name"] + " · " + hist["activity_date"]).tolist()
-            del_choice = st.selectbox("Select entry", del_labels, key="del_select")
-            if st.button("Delete entry", type="secondary"):
-                idx = del_labels.index(del_choice)
-                delete_result(int(hist.iloc[idx]["activity_id"]))
+    # ── Delete entries ─────────────────────────────────────────────────────────
+    with st.expander("🗑️ Manage history"):
+        del_labels = (hist["activity_name"] + " · " + hist["activity_date"]).tolist()
+        del_choices = st.multiselect("Select entries to delete", del_labels, key="del_select")
+
+        col_del, col_clear = st.columns([1, 1])
+        with col_del:
+            if st.button("Delete selected", type="secondary", disabled=not del_choices):
+                ids_to_delete = [
+                    int(hist.iloc[del_labels.index(lbl)]["activity_id"])
+                    for lbl in del_choices
+                ]
+                if _LOCAL:
+                    for aid in ids_to_delete:
+                        delete_result(aid)
+                else:
+                    st.session_state["history"] = [
+                        r for r in st.session_state["history"]
+                        if r["activity_id"] not in ids_to_delete
+                    ]
+                st.rerun()
+        with col_clear:
+            if st.button("Clear all history", type="secondary"):
+                if _LOCAL:
+                    clear_history()
+                else:
+                    st.session_state["history"] = []
                 st.rerun()

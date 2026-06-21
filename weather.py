@@ -64,6 +64,10 @@ def get_wind(
         cos_s = sum(math.cos(math.radians(d)) for d in sel_d)
         avg_dir = (math.degrees(math.atan2(sin_s, cos_s)) + 360) % 360
 
+        # ERA5 wind is at 10 m; scale to cyclist height (~1.5 m) via atmospheric power law
+        # v(z) = v_10m × (z / 10)^0.14  →  (1.5/10)^0.14 ≈ 0.767
+        avg_speed *= (1.5 / 10) ** 0.14
+
         return avg_speed, avg_dir
 
     except Exception:

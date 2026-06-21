@@ -34,13 +34,39 @@ def _secret(key: str) -> str:
     except Exception:
         return os.getenv(key, "")
 
-BIKE_PRESETS: dict[str, dict] = {
-    "Gravel – hoods, 38 mm + tube":    dict(bike_kg=12.0, CdA=0.32, Crr=0.011),
-    "Gravel – drops, 38 mm + tube":    dict(bike_kg=12.0, CdA=0.27, Crr=0.011),
-    "Gravel – hoods, 38 mm tubeless":  dict(bike_kg=11.5, CdA=0.32, Crr=0.007),
-    "Road – hoods, 25 mm clincher":    dict(bike_kg=8.0,  CdA=0.32, Crr=0.005),
-    "MTB – upright":                   dict(bike_kg=13.0, CdA=0.45, Crr=0.020),
-    "Custom":                          dict(bike_kg=12.0, CdA=0.32, Crr=0.011),
+# Bike type → frame weight + base CdA (riding position implied by bike + hand pos)
+BIKE_TYPES: dict[str, dict] = {
+    "Road – hoods":          dict(bike_kg=8.0,  CdA=0.32),
+    "Road – drops":          dict(bike_kg=8.0,  CdA=0.27),
+    "Road – TT / aero bars": dict(bike_kg=8.5,  CdA=0.22),
+    "Gravel – hoods":        dict(bike_kg=11.5, CdA=0.33),
+    "Gravel – drops":        dict(bike_kg=11.5, CdA=0.28),
+    "MTB / VTT":             dict(bike_kg=13.0, CdA=0.45),
+    "Hybrid / Trekking":     dict(bike_kg=14.0, CdA=0.50),
+    "City / Dutch":          dict(bike_kg=16.0, CdA=0.55),
+    "Custom":                dict(bike_kg=12.0, CdA=0.32),
+}
+
+# Tire type → Crr + small CdA penalty for width (vs 25 mm baseline).
+# Crr values from bicyclerollingresistance.com at ~30 km/h on smooth tarmac;
+# real off-road Crr is higher — these are conservative averages.
+TIRE_TYPES: dict[str, dict] = {
+    "Road slick 25 mm – tubeless":      dict(Crr=0.0040, cda_delta=0.000),
+    "Road slick 25 mm – tube":          dict(Crr=0.0050, cda_delta=0.000),
+    "Road slick 28 mm – tubeless":      dict(Crr=0.0045, cda_delta=0.005),
+    "Road slick 28 mm – tube":          dict(Crr=0.0055, cda_delta=0.005),
+    "Gravel slick 35 mm – tubeless":    dict(Crr=0.0055, cda_delta=0.010),
+    "Gravel slick 38 mm – tubeless":    dict(Crr=0.0060, cda_delta=0.012),
+    "Gravel slick 38 mm – tube":        dict(Crr=0.0080, cda_delta=0.012),
+    "Gravel semi-slick 40 mm – tubeless": dict(Crr=0.0075, cda_delta=0.014),
+    "Gravel semi-slick 40 mm – tube":   dict(Crr=0.0095, cda_delta=0.014),
+    "Gravel knobby 40 mm – tube":       dict(Crr=0.0110, cda_delta=0.014),
+    "Gravel knobby 45 mm – tube":       dict(Crr=0.0130, cda_delta=0.018),
+    "MTB XC 2.2\" – tubeless":          dict(Crr=0.0140, cda_delta=0.025),
+    "MTB trail 2.4\" – tubeless":       dict(Crr=0.0180, cda_delta=0.030),
+    "MTB enduro 2.5\"+ – tubeless":     dict(Crr=0.0220, cda_delta=0.035),
+    "Trekking / city 35–40 mm":         dict(Crr=0.0080, cda_delta=0.014),
+    "Custom":                           dict(Crr=0.0070, cda_delta=0.012),
 }
 
 def _detect_redirect_uri() -> str:
@@ -91,11 +117,26 @@ with st.sidebar:
     rider_weight = st.number_input("Rider weight (kg)", value=72.0, step=0.5,
                                     min_value=30.0, max_value=200.0)
 
-    bike_preset_name = st.selectbox("Bike profile", list(BIKE_PRESETS.keys()))
-    preset = BIKE_PRESETS[bike_preset_name]
+    bike_type_name = st.selectbox(
+        "Bike type",
+        list(BIKE_TYPES.keys()),
+        index=list(BIKE_TYPES.keys()).index("Gravel – hoods"),
+        help="Frame, geometry & riding position → bike weight + base CdA",
+    )
+    bike = BIKE_TYPES[bike_type_name]
+
+    tire_type_name = st.selectbox(
+        "Tires",
+        list(TIRE_TYPES.keys()),
+        index=list(TIRE_TYPES.keys()).index("Gravel knobby 40 mm – tube"),
+        help="Tire width & casing → rolling resistance (Crr) + small aero penalty for width",
+    )
+    tire = TIRE_TYPES[tire_type_name]
+
+    bike_profile_name = f"{bike_type_name} + {tire_type_name}"
 
     bike_weight = st.number_input(
-        "Bike weight (kg)", value=float(preset["bike_kg"]), step=0.1,
+        "Bike weight (kg)", value=float(bike["bike_kg"]), step=0.1,
         min_value=3.0, max_value=40.0,
     )
     bags_weight = st.number_input(
@@ -105,21 +146,26 @@ with st.sidebar:
     total_mass = rider_weight + bike_weight + bags_weight
     st.caption(f"Total system mass: **{total_mass:.1f} kg**")
 
+    _cda_default = float(bike["CdA"]) + float(tire["cda_delta"])
     with st.expander("Advanced physics"):
+        st.caption(
+            f"Base CdA from bike: **{bike['CdA']:.3f}** + tire width penalty "
+            f"**{tire['cda_delta']:+.3f}** = **{_cda_default:.3f}**"
+        )
         CdA = st.number_input(
-            "CdA (m²)", value=float(preset["CdA"]), step=0.01, format="%.3f",
+            "CdA (m²)", value=_cda_default, step=0.01, format="%.3f",
             help=(
                 "Aerodynamic drag coefficient × frontal area.\n"
-                "Hoods ≈ 0.32 | Drops ≈ 0.27 | Upright ≈ 0.45\n"
-                "Add ~0.01–0.03 for a large handlebar bag."
+                "Hoods ≈ 0.32 | Drops ≈ 0.27 | TT ≈ 0.22 | Upright MTB ≈ 0.45\n"
+                "Wider tires add ~0.01–0.03. Large bar bag adds ~0.01–0.03 more."
             ),
         )
         Crr = st.number_input(
-            "Crr (rolling resistance)", value=float(preset["Crr"]), step=0.001, format="%.4f",
+            "Crr (rolling resistance)", value=float(tire["Crr"]), step=0.0005, format="%.4f",
             help=(
-                "38 mm gravel + inner tube + rough surface ≈ 0.011\n"
-                "Road 25 mm clincher ≈ 0.004–0.005\n"
-                "Gravel 40 mm tubeless smooth ≈ 0.006–0.007"
+                "From bike tires database, smooth tarmac at ~30 km/h.\n"
+                "Real Crr on rough/gravel can be 1.5–2× higher.\n"
+                "Road tubeless 25 mm ≈ 0.004 | Gravel 40 mm knobby ≈ 0.011 | MTB XC ≈ 0.014"
             ),
         )
         mech_eff = st.number_input(
@@ -377,7 +423,7 @@ if st.button("💾 Save to history", help="Record this result with the current s
         activity_id=chosen_id,
         activity_name=chosen_activity["name"],
         activity_date=chosen_activity["start_date_local"][:10],
-        bike_profile=bike_preset_name,
+        bike_profile=bike_profile_name,
         rider_kg=rider_weight, bike_kg=bike_weight, bags_kg=bags_weight,
         total_kg=total_mass,
         CdA=CdA, Crr=Crr, mech_eff=mech_eff, drive_eff=drive_eff,

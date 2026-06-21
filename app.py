@@ -179,15 +179,17 @@ st.caption("Physics-based power & calorie estimation — no power meter needed")
 if "token" not in st.session_state:
     st.markdown("---")
     st.subheader("Getting started")
+    from urllib.parse import urlparse
+    _callback_host = urlparse(REDIRECT_URI).hostname or "localhost"
     st.markdown(
-        """
-1. Go to **[strava.com/settings/api](https://www.strava.com/settings/api)** and create an app
-   — set *Authorization Callback Domain* to `localhost`
-2. Paste your **Client ID** and **Client Secret** in the sidebar
+        f"""
+1. Go to **[strava.com/settings/api](https://www.strava.com/settings/api)** and create (or edit) an app
+   — set *Authorization Callback Domain* to **`{_callback_host}`** (just the hostname, no `https://`, no trailing `/`)
+2. Paste your **Client ID** and **Client Secret** in the sidebar (or set them in Streamlit secrets)
 3. Click Connect below
         """
     )
-    st.caption(f":grey[Redirect URI: `{REDIRECT_URI}` — the **Authorization Callback Domain** in your Strava app must match this host]")
+    st.caption(f":grey[Redirect URI being sent: `{REDIRECT_URI}` — callback domain on Strava must be `{_callback_host}`]")
 
     if client_id and client_secret:
         auth_url = "https://www.strava.com/oauth/authorize?" + urlencode(

@@ -513,6 +513,12 @@ else:
 if hist.empty:
     st.info("No saved activities yet. Analyse a ride and click 'Save to history'.")
 else:
+    st.download_button(
+        "⬇ Export CSV",
+        data=hist.to_csv(index=False).encode(),
+        file_name="strava_power_history.csv",
+        mime="text/csv",
+    )
     # ── Trend charts ──────────────────────────────────────────────────────────
     hc1, hc2 = st.columns(2)
 

@@ -184,7 +184,7 @@ if "token" not in st.session_state:
             }
         )
         st.markdown(
-            f'<a href="{auth_url}" target="_self">'
+            f'<a href="{auth_url}" target="_top">'
             '<button style="background:#FC4C02;color:#fff;border:none;padding:12px 28px;'
             "border-radius:6px;font-size:16px;cursor:pointer;font-weight:700;"
             'margin-top:8px">Connect with Strava</button></a>',

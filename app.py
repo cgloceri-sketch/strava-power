@@ -43,7 +43,21 @@ BIKE_PRESETS: dict[str, dict] = {
     "Custom":                          dict(bike_kg=12.0, CdA=0.32, Crr=0.011),
 }
 
-REDIRECT_URI = _secret("REDIRECT_URI") or "http://localhost:8501/"
+def _detect_redirect_uri() -> str:
+    """Auto-detect the correct redirect URI from the current request host.
+    Explicit secret always wins; otherwise derive from Host header."""
+    explicit = _secret("REDIRECT_URI")
+    if explicit:
+        return explicit
+    try:
+        host = st.context.headers.get("host", "")
+        if host and not host.startswith("localhost") and not host.startswith("127."):
+            return f"https://{host}/"
+    except Exception:
+        pass
+    return "http://localhost:8501/"
+
+REDIRECT_URI = _detect_redirect_uri()
 
 # ── Page config ───────────────────────────────────────────────────────────────
 
@@ -173,6 +187,8 @@ if "token" not in st.session_state:
 3. Click Connect below
         """
     )
+    st.caption(f":grey[Redirect URI: `{REDIRECT_URI}` — the **Authorization Callback Domain** in your Strava app must match this host]")
+
     if client_id and client_secret:
         auth_url = "https://www.strava.com/oauth/authorize?" + urlencode(
             {

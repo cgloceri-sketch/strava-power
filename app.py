@@ -58,6 +58,7 @@ TIRE_TYPES: dict[str, dict] = {
     "Gravel slick 35 mm – tubeless":    dict(Crr=0.0055, cda_delta=0.010),
     "Gravel slick 38 mm – tubeless":    dict(Crr=0.0060, cda_delta=0.012),
     "Gravel slick 38 mm – tube":        dict(Crr=0.0080, cda_delta=0.012),
+    "Gravel knobby 38 mm – tube":       dict(Crr=0.0100, cda_delta=0.012),
     "Gravel semi-slick 40 mm – tubeless": dict(Crr=0.0075, cda_delta=0.014),
     "Gravel semi-slick 40 mm – tube":   dict(Crr=0.0095, cda_delta=0.014),
     "Gravel knobby 40 mm – tube":       dict(Crr=0.0110, cda_delta=0.014),
@@ -128,7 +129,7 @@ with st.sidebar:
     tire_type_name = st.selectbox(
         "Tires",
         list(TIRE_TYPES.keys()),
-        index=list(TIRE_TYPES.keys()).index("Gravel knobby 40 mm – tube"),
+        index=list(TIRE_TYPES.keys()).index("Gravel knobby 38 mm – tube"),
         help="Tire width & casing → rolling resistance (Crr) + small aero penalty for width",
     )
     tire = TIRE_TYPES[tire_type_name]

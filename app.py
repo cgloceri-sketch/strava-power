@@ -1,6 +1,7 @@
 import os
 import sys
-from datetime import datetime
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -191,6 +192,77 @@ with st.sidebar:
     else:
         st.caption("☁️ **Cloud mode** — history resets when tab closes")
 
+# ── Compute helper (shared by manual & bulk paths) ────────────────────────────
+
+def _compute_record_from_streams(
+    activity: dict,
+    streams: dict,
+    *,
+    total_mass: float, CdA: float, Crr: float,
+    mech_eff: float, drive_eff: float,
+    rider_kg: float, bike_kg: float, bags_kg: float,
+    bike_profile_name: str,
+) -> dict | None:
+    """Run the physics model on a streams payload and return a save-ready record.
+    Returns None if the activity lacks the required streams (e.g. manual entry)."""
+    REQUIRED = {"time", "velocity_smooth", "grade_smooth", "altitude"}
+    if REQUIRED - set(streams):
+        return None
+
+    t   = np.array(streams["time"]["data"],            dtype=float)
+    v   = np.array(streams["velocity_smooth"]["data"], dtype=float)
+    g   = np.array(streams["grade_smooth"]["data"],    dtype=float)
+    alt = np.array(streams["altitude"]["data"],        dtype=float)
+    latlng = streams.get("latlng", {}).get("data")
+    _mv = streams.get("moving", {}).get("data")
+    _strava_moving = np.array(_mv, dtype=bool) if _mv else None
+
+    wind_speed_ms, wind_from_deg, avg_headwind_ms, v_air = None, None, None, None
+    start_lat = activity.get("start_latlng", [None, None])[0] if activity.get("start_latlng") else None
+    start_lng = activity.get("start_latlng", [None, None])[1] if activity.get("start_latlng") else None
+    start_utc = activity.get("start_date", "")
+    if start_lat and start_lng and start_utc and latlng:
+        wind_speed_ms, wind_from_deg = get_wind(
+            start_lat, start_lng,
+            start_utc[:10], int(start_utc[11:13]),
+            activity["moving_time"] / 3600,
+        )
+        if wind_speed_ms is not None:
+            v_air = apparent_air_speed(v, latlng, wind_speed_ms, wind_from_deg)
+            avg_headwind_ms = float(-np.mean(v - v_air))
+
+    power = estimate_power(t, v, g, alt, total_mass, CdA, Crr, drive_eff, v_air=v_air)
+    dt    = np.diff(t, prepend=t[0])
+    kcal  = energy_to_kcal(power, t, mech_eff)
+    kJ    = float(np.sum(power * dt)) / 1000.0
+
+    if _strava_moving is not None and len(_strava_moving) == len(v):
+        moving_mask = _strava_moving
+    else:
+        moving_mask = v > 0.5
+    pm = power[moving_mask]
+    avg_w = float(np.mean(pm)) if len(pm) > 0 else 0.0
+    NP    = normalized_power(pm) if len(pm) >= 30 else avg_w
+    avg_v = float(np.mean(v[moving_mask])) * 3.6 if moving_mask.any() else float(np.mean(v)) * 3.6
+
+    return dict(
+        activity_id=activity["id"],
+        activity_name=activity["name"],
+        activity_date=activity["start_date_local"][:10],
+        bike_profile=bike_profile_name,
+        rider_kg=rider_kg, bike_kg=bike_kg, bags_kg=bags_kg,
+        total_kg=total_mass,
+        CdA=CdA, Crr=Crr, mech_eff=mech_eff, drive_eff=drive_eff,
+        avg_power_w=avg_w, norm_power_w=NP, energy_kj=kJ,
+        calories_kcal=kcal, avg_speed_kmh=avg_v,
+        duration_s=activity["moving_time"],
+        distance_m=activity["distance"],
+        wind_speed_ms=wind_speed_ms,
+        wind_from_deg=wind_from_deg,
+        avg_headwind_ms=avg_headwind_ms,
+    )
+
+
 # ── OAuth code exchange ───────────────────────────────────────────────────────
 
 params = st.query_params
@@ -304,6 +376,119 @@ with col_sel:
                                  label_visibility="collapsed")
 with col_btn:
     analyse_clicked = st.button("Analyse", type="primary", use_container_width=True)
+
+# ── Bulk compute (whole year) ─────────────────────────────────────────────────
+
+with st.expander("🔄 Bulk compute a whole year"):
+    st.caption(
+        "Process every cycling activity in a given year with your current sidebar "
+        "settings (bike, tires, mass, CdA, Crr). Edit individual entries afterward "
+        "if some rides used a different setup."
+    )
+    _now_year = datetime.now().year
+    bc_col1, bc_col2 = st.columns([1, 2])
+    with bc_col1:
+        bc_year = st.number_input(
+            "Year", min_value=2000, max_value=_now_year,
+            value=_now_year, step=1,
+        )
+    with bc_col2:
+        bc_recompute = st.checkbox(
+            "Recompute activities already in history",
+            value=False,
+            help="If unchecked, skips activities whose ID is already saved.",
+        )
+    bc_go = st.button(f"Compute all {bc_year} rides", type="secondary")
+
+    if bc_go:
+        # Build set of already-saved activity IDs
+        if _LOCAL:
+            _existing = load_history()
+        else:
+            _existing = pd.DataFrame(st.session_state.get("history", []))
+        existing_ids: set[int] = set(
+            int(x) for x in _existing["activity_id"].tolist()
+        ) if not _existing.empty else set()
+
+        after_ts  = int(datetime(bc_year,     1, 1, tzinfo=timezone.utc).timestamp())
+        before_ts = int(datetime(bc_year + 1, 1, 1, tzinfo=timezone.utc).timestamp())
+
+        try:
+            with st.spinner(f"Listing {bc_year} activities…"):
+                year_acts = StravaClient("", "", st.session_state["token"]) \
+                    .get_activities_in_range(after_ts, before_ts)
+        except Exception as exc:
+            st.error(f"Failed to list activities: {exc}")
+            st.stop()
+
+        year_rides = [
+            a for a in year_acts
+            if a.get("sport_type") in CYCLING_SPORT_TYPES
+            or a.get("type") in CYCLING_SPORT_TYPES
+        ]
+        if not bc_recompute:
+            year_rides = [a for a in year_rides if a["id"] not in existing_ids]
+
+        if not year_rides:
+            st.info(f"Nothing to do — no new cycling rides found for {bc_year}.")
+        else:
+            st.write(f"Processing **{len(year_rides)}** rides…")
+            prog   = st.progress(0.0)
+            status = st.empty()
+            saved, skipped, failed = 0, 0, 0
+            client = StravaClient("", "", st.session_state["token"])
+
+            for i, act in enumerate(year_rides, start=1):
+                label = f"{act['name']} · {act['start_date_local'][:10]}"
+                status.write(f"[{i}/{len(year_rides)}] {label}")
+                try:
+                    streams = client.get_streams(act["id"])
+                except Exception as exc:
+                    msg = str(exc)
+                    if "429" in msg or "Too Many Requests" in msg:
+                        status.error(
+                            "Strava rate limit hit (100 req / 15 min). "
+                            f"Stopping at {i - 1}/{len(year_rides)}. "
+                            "Try again in ~15 minutes — already-saved rides will be skipped."
+                        )
+                        break
+                    failed += 1
+                    continue
+
+                rec = _compute_record_from_streams(
+                    act, streams,
+                    total_mass=total_mass, CdA=CdA, Crr=Crr,
+                    mech_eff=mech_eff, drive_eff=drive_eff,
+                    rider_kg=rider_weight, bike_kg=bike_weight, bags_kg=bags_weight,
+                    bike_profile_name=bike_profile_name,
+                )
+                if rec is None:
+                    skipped += 1
+                else:
+                    if _LOCAL:
+                        save_result(**rec)
+                    else:
+                        st.session_state.setdefault("history", [])
+                        # Replace existing entry if recomputing
+                        st.session_state["history"] = [
+                            r for r in st.session_state["history"]
+                            if r["activity_id"] != rec["activity_id"]
+                        ]
+                        st.session_state["history"].append(
+                            {**rec, "recorded_at": datetime.now().isoformat()}
+                        )
+                    saved += 1
+
+                prog.progress(i / len(year_rides))
+                time.sleep(0.2)  # gentle pacing for Strava rate limit
+
+            status.empty()
+            prog.empty()
+            st.success(
+                f"Done — **{saved} saved**, {skipped} skipped (no GPS streams), "
+                f"{failed} failed."
+            )
+            st.rerun()
 
 chosen_id = activity_options[chosen_label]
 chosen_activity = next(a for a in cycling if a["id"] == chosen_id)

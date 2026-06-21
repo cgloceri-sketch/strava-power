@@ -51,6 +51,33 @@ class StravaClient:
         r.raise_for_status()
         return r.json()
 
+    def get_activities_in_range(self, after_epoch: int, before_epoch: int) -> list:
+        """Fetch all activities between two unix timestamps, paginated (200/page)."""
+        activities: list = []
+        page = 1
+        while True:
+            r = requests.get(
+                f"{self.BASE}/athlete/activities",
+                headers=self._headers(),
+                params={
+                    "after":    after_epoch,
+                    "before":   before_epoch,
+                    "per_page": 200,
+                    "page":     page,
+                },
+                timeout=15,
+                verify=_SSL,
+            )
+            r.raise_for_status()
+            batch = r.json()
+            if not batch:
+                break
+            activities.extend(batch)
+            if len(batch) < 200:
+                break
+            page += 1
+        return activities
+
     def get_streams(self, activity_id: int) -> dict:
         """Return streams keyed by type. Required keys: time, velocity_smooth,
         grade_smooth, altitude. Optional: distance."""

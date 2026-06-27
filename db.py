@@ -40,13 +40,16 @@ def init_db() -> None:
                 distance_m      REAL,
                 wind_speed_ms   REAL,
                 wind_from_deg   REAL,
-                avg_headwind_ms REAL
+                avg_headwind_ms REAL,
+                peloton_size     INTEGER,
+                peloton_fraction REAL
             )
         """)
         # Non-destructive migration for existing databases
         for col_def in (
             "wind_speed_ms REAL", "wind_from_deg REAL", "avg_headwind_ms REAL",
             "bike_profile TEXT",
+            "peloton_size INTEGER", "peloton_fraction REAL",
         ):
             try:
                 c.execute(f"ALTER TABLE results ADD COLUMN {col_def}")
@@ -65,6 +68,8 @@ def save_result(
     wind_speed_ms: float | None = None,
     wind_from_deg: float | None = None,
     avg_headwind_ms: float | None = None,
+    peloton_size: int | None = None,
+    peloton_fraction: float | None = None,
 ) -> None:
     with _conn() as c:
         c.execute("""
@@ -75,8 +80,9 @@ def save_result(
                  CdA, Crr, mech_eff, drive_eff,
                  avg_power_w, norm_power_w, energy_kj, calories_kcal,
                  avg_speed_kmh, duration_s, distance_m,
-                 wind_speed_ms, wind_from_deg, avg_headwind_ms)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 wind_speed_ms, wind_from_deg, avg_headwind_ms,
+                 peloton_size, peloton_fraction)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             activity_id, activity_name, activity_date, datetime.now().isoformat(),
             bike_profile,
@@ -85,6 +91,7 @@ def save_result(
             avg_power_w, norm_power_w, energy_kj, calories_kcal,
             avg_speed_kmh, duration_s, distance_m,
             wind_speed_ms, wind_from_deg, avg_headwind_ms,
+            peloton_size, peloton_fraction,
         ))
 
 

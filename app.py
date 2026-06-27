@@ -48,6 +48,18 @@ BIKE_TYPES: dict[str, dict] = {
     "Custom":                dict(bike_kg=12.0, CdA=0.32),
 }
 
+# Average per-rider drag reduction in a *loose amateur* rotating paceline
+# (~1 m wheel gap — not pro-tight). Used to scale CdA for the drafting portion
+# of the ride. Numbers from Blocken/Iniguez wind-tunnel + CFD studies, halved
+# from the pro-paceline figures to reflect a realistic amateur gap.
+PELOTON_SAVINGS_PER_SIZE = {2: 0.10, 3: 0.14}
+
+
+def _draft_savings(size: int, fraction: float) -> float:
+    s = PELOTON_SAVINGS_PER_SIZE.get(int(size or 0), 0.0)
+    return s * max(0.0, min(1.0, float(fraction or 0.0)))
+
+
 # Tire type → Crr + small CdA penalty for width (vs 25 mm baseline).
 # Crr values from bicyclerollingresistance.com at ~30 km/h on smooth tarmac;
 # real off-road Crr is higher — these are conservative averages.
@@ -148,6 +160,28 @@ with st.sidebar:
     total_mass = rider_weight + bike_weight + bags_weight
     st.caption(f"Total system mass: **{total_mass:.1f} kg**")
 
+    in_peloton = st.checkbox(
+        "Rode in a group 👥",
+        value=False,
+        help=(
+            "Reduces effective CdA over the drafting portion of the ride. "
+            "Assumes a loose amateur paceline (~1 m gap), not a pro-tight one."
+        ),
+    )
+    if in_peloton:
+        peloton_size = st.selectbox("Group size", [2, 3], index=1)
+        peloton_pct  = st.slider(
+            "Fraction of ride drafting", 0, 100, 50, step=5, format="%d%%",
+        )
+        peloton_fraction = peloton_pct / 100.0
+        _draft = _draft_savings(peloton_size, peloton_fraction)
+        st.caption(
+            f"≈ **{_draft*100:.1f}%** avg CdA reduction "
+            f"({PELOTON_SAVINGS_PER_SIZE[peloton_size]*100:.0f}% × {peloton_pct}%)"
+        )
+    else:
+        peloton_size, peloton_fraction = 0, 0.0
+
     _cda_default = float(bike["CdA"]) + float(tire["cda_delta"])
     with st.expander("Advanced physics"):
         st.caption(
@@ -202,6 +236,7 @@ def _compute_record_from_streams(
     mech_eff: float, drive_eff: float,
     rider_kg: float, bike_kg: float, bags_kg: float,
     bike_profile_name: str,
+    peloton_size: int = 0, peloton_fraction: float = 0.0,
 ) -> dict | None:
     """Run the physics model on a streams payload and return a save-ready record.
     Returns None if the activity lacks the required streams (e.g. manual entry)."""
@@ -231,7 +266,8 @@ def _compute_record_from_streams(
             v_air = apparent_air_speed(v, latlng, wind_speed_ms, wind_from_deg)
             avg_headwind_ms = float(-np.mean(v - v_air))
 
-    power = estimate_power(t, v, g, alt, total_mass, CdA, Crr, drive_eff, v_air=v_air)
+    cda_effective = CdA * (1.0 - _draft_savings(peloton_size, peloton_fraction))
+    power = estimate_power(t, v, g, alt, total_mass, cda_effective, Crr, drive_eff, v_air=v_air)
     dt    = np.diff(t, prepend=t[0])
     kcal  = energy_to_kcal(power, t, mech_eff)
     kJ    = float(np.sum(power * dt)) / 1000.0
@@ -260,6 +296,8 @@ def _compute_record_from_streams(
         wind_speed_ms=wind_speed_ms,
         wind_from_deg=wind_from_deg,
         avg_headwind_ms=avg_headwind_ms,
+        peloton_size=int(peloton_size or 0),
+        peloton_fraction=float(peloton_fraction or 0.0),
     )
 
 
@@ -461,6 +499,7 @@ with st.expander("🔄 Bulk compute a whole year"):
                     mech_eff=mech_eff, drive_eff=drive_eff,
                     rider_kg=rider_weight, bike_kg=bike_weight, bags_kg=bags_weight,
                     bike_profile_name=bike_profile_name,
+                    peloton_size=peloton_size, peloton_fraction=peloton_fraction,
                 )
                 if rec is None:
                     skipped += 1
@@ -555,7 +594,8 @@ if start_lat and start_lng and start_utc and latlng:
         wind_tail = v - v_air  # positive = tailwind, negative = headwind
         avg_headwind_ms = float(-np.mean(wind_tail))  # positive = net headwind
 
-power = estimate_power(t, v, g, alt, total_mass, CdA, Crr, drive_eff, v_air=v_air)
+cda_effective = CdA * (1.0 - _draft_savings(peloton_size, peloton_fraction))
+power = estimate_power(t, v, g, alt, total_mass, cda_effective, Crr, drive_eff, v_air=v_air)
 dt    = np.diff(t, prepend=t[0])
 kcal  = energy_to_kcal(power, t, mech_eff)
 kJ    = float(np.sum(power * dt)) / 1000.0
@@ -634,6 +674,8 @@ if st.button("💾 Save to history", help="Record this result with the current s
         wind_speed_ms=wind_speed_ms,
         wind_from_deg=wind_from_deg,
         avg_headwind_ms=avg_headwind_ms,
+        peloton_size=int(peloton_size or 0),
+        peloton_fraction=float(peloton_fraction or 0.0),
     )
     if _LOCAL:
         save_result(**_record)
@@ -768,6 +810,18 @@ else:
         if col not in hist.columns:
             hist[col] = None
     tbl = hist[list(display_cols)].rename(columns=display_cols)
+
+    def _group_label(row) -> str:
+        sz = row.get("peloton_size") or 0
+        fr = row.get("peloton_fraction") or 0.0
+        if sz and fr > 0:
+            return f"{int(sz)}p · {int(round(fr * 100))}%"
+        return "—"
+
+    for col in ("peloton_size", "peloton_fraction"):
+        if col not in hist.columns:
+            hist[col] = None
+    tbl["Group"] = hist.apply(_group_label, axis=1).values
     tbl["Avg W"]      = tbl["Avg W"].round(0).astype(int)
     tbl["NP (W)"]     = tbl["NP (W)"].round(0).astype(int)
     tbl["Work (kJ)"]  = tbl["Work (kJ)"].round(1)
